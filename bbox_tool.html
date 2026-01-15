@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bounding Box 标注工具</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            padding: 0; 
+            display: flex; 
+            height: 100vh; 
+            overflow: hidden; 
+            background-color: #f0f2f5; 
+        }
+        
+        /* 侧边栏样式 */
+        #sidebar { 
+            width: 320px; 
+            background: #fff; 
+            border-right: 1px solid #ccc; 
+            display: flex; 
+            flex-direction: column; 
+            padding: 10px; 
+            box-shadow: 2px 0 5px rgba(0,0,0,0.05); 
+            z-index: 10; 
+        }
+        .panel { 
+            margin-bottom: 15px; 
+            border-bottom: 1px solid #eee; 
+            padding-bottom: 10px; 
+        }
+        .panel:last-child { 
+            border-bottom: none; 
+        }
+        h3 { 
+            margin: 0 0 10px 0; 
+            font-size: 16px; 
+            color: #333; 
+        }
+        button { 
+            cursor: pointer; 
+            padding: 8px 12px; 
+            margin: 3px; 
+            background-color: #007bff; 
+            color: white; 
+            border: none; 
+            border-radius: 4px; 
+            font-size: 13px; 
+            transition: background 0.2s; 
+        }
+        button:hover { 
+            background-color: #0056b3; 
+        }
+        button.secondary { 
+            background-color: #6c757d; 
+        }
+        button.secondary:hover { 
+            background-color: #545b62; 
+        }
+        button.danger { 
+            background-color: #dc3545; 
+        }
+        button.danger:hover { 
+            background-color: #c82333; 
+        }
+        button.success {
+            background-color: #28a745;
+        }
+        button.success:hover {
+            background-color: #218838;
+        }
+        input[type="file"] {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+        }
+
+        /* 主区域 */
+        #main-area { 
+            flex: 1; 
+            display: flex; 
+            flex-direction: column; 
+            position: relative; 
+            overflow: hidden; 
+        }
+        #toolbar { 
+            height: 50px; 
+            background: #fff; 
+            border-bottom: 1px solid #ccc; 
+            display: flex; 
+            align-items: center; 
+            padding: 0 20px; 
+            gap: 15px; 
+            justify-content: space-between; 
+        }
+        #image-container { 
+            flex: 1; 
+            overflow: auto; 
+            position: relative; 
+            background-color: #525659; 
+            display: flex; 
+            justify-content: center; 
+            align-items: flex-start; 
+            padding: 20px; 
+        }
+        
+        /* 图片包装器 */
+        #image-wrapper { 
+            position: relative; 
+            display: inline-block; 
+            box-shadow: 0 0 10px rgba(0,0,0,0.3); 
+            background: white; 
+        }
+        #image-display { 
+            display: block; 
+            max-width: 100%; 
+            height: auto; 
+        }
+
+        /* Bounding Box 样式 */
+        .bbox {
+            position: absolute;
+            border: 2px solid #e74c3c;
+            background-color: rgba(231, 76, 60, 0.1);
+            cursor: move;
+            box-sizing: border-box;
+        }
+        .bbox.selected {
+            border-color: #3498db;
+            background-color: rgba(52, 152, 219, 0.2);
+        }
+        .bbox-handle {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background-color: #e74c3c;
+            border: 1px solid #fff;
+            cursor: pointer;
+        }
+        .bbox.selected .bbox-handle {
+            background-color: #3498db;
+        }
+        .bbox-handle.nw { top: -4px; left: -4px; cursor: nwse-resize; }
+        .bbox-handle.ne { top: -4px; right: -4px; cursor: nesw-resize; }
+        .bbox-handle.se { bottom: -4px; right: -4px; cursor: nwse-resize; }
+        .bbox-handle.sw { bottom: -4px; left: -4px; cursor: nesw-resize; }
+        .bbox-handle.n { top: -4px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+        .bbox-handle.s { bottom: -4px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+        .bbox-handle.e { top: 50%; right: -4px; transform: translateY(-50%); cursor: ew-resize; }
+        .bbox-handle.w { top: 50%; left: -4px; transform: translateY(-50%); cursor: ew-resize; }
+
+        /* 工具栏分隔线 */
+        .toolbar-divider {
+            border-left: 1px solid #ddd;
+            padding-left: 15px;
+            margin-left: 0;
+        }
+
+        /* BBox 列表 */
+        #bbox-list {
+            flex: 1;
+            overflow-y: auto;
+            background: #fafafa;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            padding: 5px;
+        }
+        .bbox-item {
+            padding: 8px;
+            margin-bottom: 5px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .bbox-item:hover {
+            background: #f0f0f0;
+        }
+        .bbox-item.selected {
+            background: #e3f2fd;
+            border-color: #2196f3;
+        }
+        .bbox-item .bbox-info {
+            font-size: 12px;
+            color: #666;
+        }
+        .bbox-item .bbox-coords {
+            font-family: monospace;
+            font-size: 11px;
+            color: #333;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+
+<!-- 侧边栏 -->
+<div id="sidebar">
+    <div class="panel">
+        <h3>0. 批量导入Excel</h3>
+        <input type="file" id="excel-input" accept=".xlsx,.xls" />
+        <button id="load-excel-btn" class="secondary" style="width: 100%; margin-top: 5px;">📊 导入Excel实体</button>
+        <div id="excel-info" style="font-size: 11px; color: #666; margin-top: 5px; display: none;">
+            <div>已加载: <span id="excel-entity-count">0</span> 个实体</div>
+            <div>当前: <span id="current-entity-name">-</span></div>
+        </div>
+        <div id="excel-navigation" style="display: none; margin-top: 10px;">
+            <input type="text" id="entity-search-input" placeholder="输入实体名称跳转" style="width: 100%; padding: 6px; margin-bottom: 5px; font-size: 12px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;" />
+            <div style="display: flex; gap: 5px;">
+                <button id="prev-entity-btn" class="secondary" style="flex: 1;">← 上一个</button>
+                <button id="next-entity-btn" class="secondary" style="flex: 1;">下一个 →</button>
+            </div>
+            <p style="font-size:11px; color:#666; margin-top:5px;">提示: 使用键盘 ← → 键快速翻页</p>
+        </div>
+    </div>
+
+    <div class="panel">
+        <h3>1. 加载图片</h3>
+        <input type="file" id="file-input" accept="image/*" />
+        <button id="load-from-url" class="secondary">从URL加载</button>
+    </div>
+
+    <div class="panel">
+        <h3>2. 标注工具</h3>
+        <div style="display: flex; flex-wrap: wrap; gap: 5px;">
+            <button id="draw-mode-btn" class="success">✏️ 绘制模式</button>
+            <button id="select-mode-btn" class="secondary">👆 选择模式</button>
+            <button id="jax-label-btn" class="secondary" style="background-color: #17a2b8;">🤖 Jax打标</button>
+        </div>
+        <p style="font-size:12px; color:#666; margin-top:5px;">绘制模式：拖拽绘制新框 | 选择模式：选择/编辑已有框 | Jax打标：自动识别实体并标注</p>
+    </div>
+
+    <div class="panel">
+        <h3>2.5. 输入坐标添加框</h3>
+        <input type="text" id="bbox-input" placeholder="bbox: [185, 64, 430, 70]" style="width: 100%; padding: 8px; margin-bottom: 5px; font-size: 12px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;" />
+        <button id="add-bbox-from-input-btn" class="secondary" style="width: 100%;">➕ 添加框</button>
+        <p style="font-size:11px; color:#666; margin-top:5px;">支持格式：bbox: [x1, y1, x2, y2] 或 [x1, y1, x2, y2]</p>
+    </div>
+
+    <div class="panel" style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+        <h3>3. BBox列表 (<span id="bbox-count">0</span>)</h3>
+        <div id="bbox-list">
+            <!-- BBox列表 -->
+        </div>
+    </div>
+
+    <div class="panel">
+        <h3>4. 导出</h3>
+        <button id="export-btn" class="success" style="width:100%;">📥 导出图片和坐标</button>
+        <button class="danger" id="clear-all-btn" style="width:100%; margin-top:5px;">清空所有标注</button>
+    </div>
+</div>
+
+<!-- 主区域 -->
+<div id="main-area">
+    <div id="toolbar">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div>
+                <strong>BBox标注工具</strong>
+            </div>
+            <div style="margin-left: auto; display: flex; align-items: center; gap: 15px;">
+                <button class="secondary" id="delete-selected-btn" disabled>🗑️ 删除选中</button>
+                <div class="toolbar-divider">
+                    <button class="secondary" id="back-btn" title="返回PDF矢量工具" style="background-color: #17a2b8;">← 返回PDF矢量工具</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="image-container">
+        <div id="image-wrapper">
+            <img id="image-display" src="" alt="待标注图片" style="display: none;" />
+            <div id="bbox-container"></div>
+        </div>
+    </div>
+</div>
+
+<!-- SheetJS库用于解析Excel -->
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+<script src="bbox_tool.js"></script>
+</body>
+</html>
+

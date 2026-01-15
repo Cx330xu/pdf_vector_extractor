@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF 矢量截取工具</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';</script>
+    <!-- pdf-lib 用于生成和合并PDF -->
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; display: flex; height: 100vh; overflow: hidden; background-color: #f0f2f5; }
+        
+        /* 侧边栏样式 */
+        #sidebar { width: 320px; background: #fff; border-right: 1px solid #ccc; display: flex; flex-direction: column; padding: 10px; box-shadow: 2px 0 5px rgba(0,0,0,0.05); z-index: 10; }
+        .panel { margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .panel:last-child { border-bottom: none; }
+        h3 { margin: 0 0 10px 0; font-size: 16px; color: #333; }
+        button { cursor: pointer; padding: 8px 12px; margin: 3px; background-color: #007bff; color: white; border: none; border-radius: 4px; font-size: 13px; transition: background 0.2s; }
+        button:hover { background-color: #0056b3; }
+        button.secondary { background-color: #6c757d; }
+        button.secondary:hover { background-color: #545b62; }
+        button.danger { background-color: #dc3545; }
+        button.danger:hover { background-color: #c82333; }
+        input[type="text"], input[type="number"] { padding: 6px; border: 1px solid #ddd; border-radius: 4px; width: calc(100% - 16px); margin-bottom: 5px; }
+        
+        /* 截图列表 */
+        #captured-list { flex: 1; overflow-y: auto; background: #fafafa; border: 1px solid #eee; border-radius: 4px; padding: 5px; }
+        .captured-item { position: relative; margin-bottom: 5px; border: 1px solid #ddd; padding: 8px; background: white; }
+        .captured-item .info { font-size: 12px; color: #666; margin-bottom: 4px; }
+        .captured-item .coords { font-size: 11px; font-family: monospace; color: #333; }
+        .captured-item .remove-btn { position: absolute; top: 2px; right: 2px; background: rgba(255,0,0,0.7); color: white; border: none; width: 20px; height: 20px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+        .captured-item canvas { width: 100%; display: block; margin-top: 5px; border: 1px solid #eee; }
+        
+        /* 主区域 */
+        #main-area { flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+        #toolbar { min-height: 50px; background: #fff; border-bottom: 1px solid #ccc; display: flex; align-items: center; padding: 8px 20px; gap: 10px; justify-content: space-between; flex-wrap: wrap; }
+        #pdf-container { flex: 1; overflow: auto; position: relative; background-color: #525659; display: flex; justify-content: center; padding: 20px; }
+        
+        /* PDF 包装器 */
+        #page-wrapper { position: relative; box-shadow: 0 0 10px rgba(0,0,0,0.3); line-height: 0; }
+        canvas { display: block; }
+
+        /* 截图选框样式 */
+        #crop-box {
+            position: absolute;
+            border: 2px dashed #e74c3c;
+            background-color: rgba(231, 76, 60, 0.1);
+            cursor: move;
+            display: none;
+            box-sizing: border-box;
+            z-index: 100;
+        }
+        
+        /* 拖拽手柄 */
+        .resize-handle {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: #e74c3c;
+            border: 1px solid #fff;
+            z-index: 101;
+        }
+        .rh-n { top: -5px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+        .rh-s { bottom: -5px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+        .rh-e { top: 50%; right: -5px; transform: translateY(-50%); cursor: ew-resize; }
+        .rh-w { top: 50%; left: -5px; transform: translateY(-50%); cursor: ew-resize; }
+        .rh-ne { top: -5px; right: -5px; cursor: nesw-resize; }
+        .rh-nw { top: -5px; left: -5px; cursor: nwse-resize; }
+        .rh-se { bottom: -5px; right: -5px; cursor: nwse-resize; }
+        .rh-sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
+
+        /* 预览弹窗 */
+        #preview-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 999; display: none; justify-content: center; align-items: center; flex-direction: column; }
+        #preview-content { background: #fff; max-width: 90%; max-height: 80%; overflow: auto; padding: 10px; text-align: center; }
+        #preview-content canvas { max-width: 100%; height: auto; border: 1px solid #ccc; margin-bottom: 10px; }
+        #preview-actions { margin-top: 10px; display: flex; gap: 10px; }
+
+        .status-text { font-size: 12px; color: #666; margin-left: 10px; }
+
+        /* 文本层样式 */
+        #text-layer {
+            position: absolute;
+            left: 0;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            overflow: hidden;
+            opacity: 0.2;
+            line-height: 1.0;
+            z-index: 2;
+        }
+        #text-layer > span {
+            color: transparent;
+            position: absolute;
+            white-space: pre;
+            cursor: text;
+            transform-origin: 0% 0%;
+        }
+        #text-layer .highlight {
+            background-color: rgba(255, 255, 0, 0.3);
+        }
+        #text-layer ::selection {
+            background: rgba(0, 0, 255, 0.3);
+        }
+
+        /* 工具栏中的页码跳转输入框 */
+        .toolbar-page-jump {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+        .toolbar-page-jump input {
+            width: 50px;
+            margin: 0;
+            padding: 4px;
+            font-size: 12px;
+        }
+
+        /* 工具栏中的连续翻页控制 */
+        .toolbar-auto-page {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+        .toolbar-auto-page input {
+            width: 50px;
+            margin: 0;
+            padding: 4px;
+            font-size: 12px;
+        }
+
+        /* 工具栏按钮图标样式 */
+        .toolbar-icon-btn {
+            font-size: 16px;
+            padding: 6px 10px;
+            min-width: 36px;
+        }
+
+        /* 工具栏分隔线 */
+        .toolbar-divider {
+            border-left: 1px solid #ddd;
+            padding-left: 15px;
+            margin-left: 0;
+        }
+
+        /* 响应式布局 */
+        @media (max-width: 1200px) {
+            #toolbar > div:first-child {
+                flex-wrap: wrap;
+                gap: 10px;
+            }
+            .toolbar-divider {
+                border-left: none;
+                border-top: 1px solid #ddd;
+                padding-left: 0;
+                padding-top: 8px;
+                margin-top: 8px;
+                margin-left: 0;
+            }
+        }
+
+        .info-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            background: #17a2b8;
+            color: white;
+            border-radius: 3px;
+            font-size: 11px;
+            margin-left: 5px;
+        }
+    </style>
+</head>
+<body>
+
+<!-- 侧边栏 -->
+<div id="sidebar">
+    <div class="panel">
+        <h3>1. 加载文件 <span class="info-badge">矢量模式</span></h3>
+        <input type="file" id="file-input" accept="application/pdf" />
+        <p style="font-size:11px; color:#666; margin-top:5px;">💡 此工具截取PDF为PDF格式，保持矢量清晰度</p>
+    </div>
+
+    <div class="panel">
+        <h3>2. 截取设置</h3>
+        <div style="display: flex; flex-wrap: wrap; gap: 5px;">
+            <button id="init-crop">显示/隐藏截取框</button>
+            <button id="lock-width-page">宽度=页面宽</button>
+            <button id="lock-x-toggle">锁定X轴(宽)</button>
+        </div>
+        <p style="font-size:12px; color:#666; margin-top:5px;">锁定X轴后，拖拽仅改变高度，适合去除页眉页脚。</p>
+        <button style="width:100%; margin-top:5px; font-weight:bold; font-size:15px;" id="capture-btn">📄 截取选中区域(PDF)</button>
+    </div>
+
+    <div class="panel" style="flex:1; display:flex; flex-direction:column; overflow:hidden;">
+        <h3>3. 已截取片段 (<span id="count-span">0</span>)</h3>
+        <div id="captured-list">
+            <!-- 截图列表 -->
+        </div>
+    </div>
+
+    <div class="panel">
+        <h3>4. 导出</h3>
+        <input type="text" id="filename-input" value="_diagnostic_steps" placeholder="输入文件名" />
+        <button id="preview-btn" style="width:100%; background-color: #28a745;">导出PDF</button>
+        <button class="danger" id="clear-btn" style="width:100%; margin-top:5px;">清空所有截取</button>
+    </div>
+</div>
+
+<!-- 主区域 -->
+<div id="main-area">
+    <div id="toolbar">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div>
+                <strong>PDF 视图:</strong>
+                <button class="secondary" onclick="changeZoom(0.2)">放大 +</button>
+                <button class="secondary" onclick="changeZoom(-0.2)">缩小 -</button>
+                <span class="status-text" id="zoom-level">100%</span>
+            </div>
+            <div class="toolbar-divider" style="display: flex; align-items: center; gap: 8px;">
+                <button class="secondary toolbar-icon-btn" id="prev-page" title="上一页">◀</button>
+                <span id="page-num" style="font-size:14px; min-width: 60px; text-align: center; font-weight: 500;">0 / 0</span>
+                <button class="secondary toolbar-icon-btn" id="next-page" title="下一页">▶</button>
+            </div>
+            <div class="toolbar-page-jump toolbar-divider">
+                <input type="number" id="jump-page-input" placeholder="页码" min="1" />
+                <button class="secondary" id="jump-page-btn" title="跳转到指定页">🔍 跳转</button>
+            </div>
+            <div class="toolbar-auto-page toolbar-divider">
+                <input type="number" id="auto-page-interval" value="2" min="0.5" max="10" step="0.5" placeholder="秒" title="翻页间隔(秒)" />
+                <button class="secondary" id="auto-page-toggle" title="自动连续翻页">⏯ 连续翻页</button>
+            </div>
+            <div class="toolbar-divider">
+                <button class="secondary" id="bbox-tool-btn" title="Bounding Box标注工具" style="background-color: #17a2b8;">📦 BBox工具</button>
+            </div>
+        </div>
+    </div>
+    <div id="pdf-container">
+        <div id="page-wrapper">
+            <canvas id="pdf-canvas"></canvas>
+            <div id="text-layer"></div>
+            <div id="crop-box">
+                <!-- 8个方向的手柄 -->
+                <div class="resize-handle rh-nw" data-dir="nw"></div>
+                <div class="resize-handle rh-n"  data-dir="n"></div>
+                <div class="resize-handle rh-ne" data-dir="ne"></div>
+                <div class="resize-handle rh-e"  data-dir="e"></div>
+                <div class="resize-handle rh-se" data-dir="se"></div>
+                <div class="resize-handle rh-s"  data-dir="s"></div>
+                <div class="resize-handle rh-sw" data-dir="sw"></div>
+                <div class="resize-handle rh-w"  data-dir="w"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 预览弹窗 -->
+<div id="preview-modal">
+    <div id="preview-content">
+        <div id="preview-pages-container">
+            <!-- 预览页面将在这里动态生成 -->
+        </div>
+    </div>
+    <div id="preview-actions">
+        <button onclick="downloadPDF()">⬇️ 下载PDF</button>
+        <button class="secondary" onclick="closePreview()">关闭</button>
+    </div>
+</div>
+
+<script>
+    let pdfDoc = null;
+    let pdfBytes = null; // 保存原始PDF数据用于截取
+    let pageNum = 1;
+    let pageRendering = false;
+    let pageNumPending = null;
+    let scale = 1.5;
+    let canvas = document.getElementById('pdf-canvas');
+    let ctx = canvas.getContext('2d');
+    let capturedRegions = []; // 存储截取的区域信息: [{pageNum, rect: {x, y, width, height}, previewCanvas}]
+    let textLayerDiv = document.getElementById('text-layer');
+    let currentPage = null;
+    let mergedPdfBytes = null; // 存储合并后的PDF数据
+
+    // 截图框状态
+    let cropBox = document.getElementById('crop-box');
+    let isDragging = false;
+    let isResizing = false;
+    let resizeDir = '';
+    let startX, startY, startLeft, startTop, startWidth, startHeight;
+    let isXLocked = false;
+    let isCropBoxInitialized = false;
+
+    // 连续翻页状态
+    let autoPageInterval = null;
+    let isAutoPaging = false;
+
+    // 键盘快捷键状态
+    let keyAdjustInterval = null;
+    let isKeyAdjusting = false;
+    let currentAdjustDelta = 0;
+
+    // 渲染页面
+    function renderPage(num) {
+        pageRendering = true;
+        pdfDoc.getPage(num).then(function(page) {
+            currentPage = page;
+            const viewport = page.getViewport({scale: scale});
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+            document.getElementById('page-wrapper').style.width = viewport.width + 'px';
+            document.getElementById('page-wrapper').style.height = viewport.height + 'px';
+            textLayerDiv.style.width = viewport.width + 'px';
+            textLayerDiv.style.height = viewport.height + 'px';
+
+            const renderContext = {
+                canvasContext: ctx,
+                viewport: viewport
+            };
+            const renderTask = page.render(renderContext);
+
+            renderTask.promise.then(function() {
+                renderTextLayer(page, viewport);
+                
+                pageRendering = false;
+                document.getElementById('page-num').textContent = `${pageNum} / ${pdfDoc.numPages}`;
+                if (pageNumPending !== null) {
+                    renderPage(pageNumPending);
+                    pageNumPending = null;
+                }
+            });
+        });
+    }
+
+    // 渲染文本层
+    function renderTextLayer(page, viewport) {
+        textLayerDiv.innerHTML = '';
+        
+        page.getTextContent().then(function(textContent) {
+            const textContentItems = textContent.items;
+            const transform = viewport.transform;
+            
+            for (let i = 0; i < textContentItems.length; i++) {
+                const item = textContentItems[i];
+                const tx = transform[0] * item.transform[4] + transform[2] * item.transform[5] + transform[4];
+                const ty = transform[1] * item.transform[4] + transform[3] * item.transform[5] + transform[5];
+                const angle = Math.atan2(transform[1], transform[0]);
+                const fontSize = Math.sqrt(item.transform[0] * item.transform[0] + item.transform[1] * item.transform[1]);
+                
+                const span = document.createElement('span');
+                span.textContent = item.str;
+                span.style.left = tx + 'px';
+                span.style.top = ty + 'px';
+                span.style.fontSize = fontSize + 'px';
+                span.style.fontFamily = item.fontName;
+                span.style.transform = `rotate(${angle}rad)`;
+                span.style.transformOrigin = '0% 0%';
+                
+                textLayerDiv.appendChild(span);
+            }
+        }).catch(function(error) {
+            console.warn('文本层渲染失败:', error);
+        });
+    }
+
+    function queueRenderPage(num) {
+        if (pageRendering) {
+            pageNumPending = num;
+        } else {
+            renderPage(num);
+        }
+    }
+
+    function onPrevPage() {
+        if (pageNum <= 1) return;
+        pageNum--;
+        queueRenderPage(pageNum);
+        savePDFToolState(); // 保存状态
+    }
+
+    function onNextPage() {
+        if (pageNum >= pdfDoc.numPages) return;
+        pageNum++;
+        queueRenderPage(pageNum);
+        savePDFToolState(); // 保存状态
+    }
+
+    document.getElementById('prev-page').addEventListener('click', onPrevPage);
+    document.getElementById('next-page').addEventListener('click', onNextPage);
+
+    // 页码跳转功能
+    document.getElementById('jump-page-btn').addEventListener('click', function() {
+        if (!pdfDoc) return alert("请先加载 PDF");
+        const targetPage = parseInt(document.getElementById('jump-page-input').value);
+        if (isNaN(targetPage) || targetPage < 1 || targetPage > pdfDoc.numPages) {
+            alert(`请输入有效的页码 (1-${pdfDoc.numPages})`);
+            return;
+        }
+        pageNum = targetPage;
+        queueRenderPage(pageNum);
+        document.getElementById('jump-page-input').value = '';
+        savePDFToolState(); // 保存状态
+    });
+
+    document.getElementById('jump-page-input').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            document.getElementById('jump-page-btn').click();
+        }
+    });
+
+    // 连续翻页功能
+    document.getElementById('auto-page-toggle').addEventListener('click', function() {
+        if (!pdfDoc) return alert("请先加载 PDF");
+        
+        if (isAutoPaging) {
+            if (autoPageInterval) {
+                clearInterval(autoPageInterval);
+                autoPageInterval = null;
+            }
+            isAutoPaging = false;
+            this.innerHTML = '⏯ 连续翻页';
+            this.style.backgroundColor = '#007bff';
+        } else {
+            const interval = parseFloat(document.getElementById('auto-page-interval').value) || 2;
+            if (interval < 0.5) {
+                alert('翻页间隔不能小于0.5秒');
+                return;
+            }
+            
+            autoPageInterval = setInterval(function() {
+                if (pageNum < pdfDoc.numPages) {
+                    onNextPage();
+                } else {
+                    document.getElementById('auto-page-toggle').click();
+                }
+            }, interval * 1000);
+            
+            isAutoPaging = true;
+            this.innerHTML = '⏸ 停止翻页';
+            this.style.backgroundColor = '#dc3545';
+        }
+    });
+
+    function changeZoom(delta) {
+        if (!pdfDoc) return;
+        scale += delta;
+        if (scale < 0.5) scale = 0.5;
+        document.getElementById('zoom-level').innerText = Math.round(scale * 100) + '%';
+        queueRenderPage(pageNum); // 使用 queueRenderPage 避免冲突
+        savePDFToolState(); // 保存状态
+    }
+
+    function adjustCropBoxBottom(delta) {
+        if (!pdfDoc || cropBox.style.display === 'none') return;
+        
+        const currentHeight = parseInt(cropBox.style.height, 10) || cropBox.offsetHeight;
+        const currentTop = cropBox.offsetTop;
+        const newHeight = currentHeight + delta;
+        
+        if (newHeight < 10) return;
+        if (currentTop + newHeight > canvas.height) {
+            cropBox.style.height = (canvas.height - currentTop) + 'px';
+        } else {
+            cropBox.style.height = newHeight + 'px';
+        }
+    }
+
+    // 键盘快捷键支持
+    document.addEventListener('keydown', function(e) {
+        if (!pdfDoc) return;
+        
+        if ((e.key === ' ' || e.key === 'Spacebar') && !e.target.matches('input, textarea')) {
+            e.preventDefault();
+            captureSelectedArea();
+            return;
+        }
+        
+        if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && cropBox.style.display !== 'none') {
+            e.preventDefault();
+            
+            const delta = e.key === 'ArrowUp' ? -5 : 5;
+            currentAdjustDelta = delta;
+            
+            adjustCropBoxBottom(delta);
+            
+            if (!isKeyAdjusting) {
+                isKeyAdjusting = true;
+                setTimeout(function() {
+                    if (isKeyAdjusting && currentAdjustDelta !== 0) {
+                        keyAdjustInterval = setInterval(function() {
+                            adjustCropBoxBottom(currentAdjustDelta);
+                        }, 50);
+                    }
+                }, 150);
+            }
+            return;
+        }
+        
+        if (e.key === 'ArrowLeft' && !e.target.matches('input, textarea')) {
+            e.preventDefault();
+            onPrevPage();
+        } else if (e.key === 'ArrowRight' && !e.target.matches('input, textarea')) {
+            e.preventDefault();
+            onNextPage();
+        } else if (e.key === 'PageUp' && !e.target.matches('input, textarea')) {
+            e.preventDefault();
+            onPrevPage();
+        } else if (e.key === 'PageDown' && !e.target.matches('input, textarea')) {
+            e.preventDefault();
+            onNextPage();
+        }
+    });
+
+    document.addEventListener('keyup', function(e) {
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+            if (keyAdjustInterval) {
+                clearInterval(keyAdjustInterval);
+                keyAdjustInterval = null;
+            }
+            isKeyAdjusting = false;
+            currentAdjustDelta = 0;
+        }
+    });
+
+    // ================= 截图框逻辑 =================
+
+    function initCropBox() {
+        if (!pdfDoc) return alert("请先加载 PDF");
+        cropBox.style.left = '50px';
+        cropBox.style.top = '50px';
+        cropBox.style.width = (canvas.width - 100) + 'px';
+        cropBox.style.height = (canvas.height / 3) + 'px';
+        isXLocked = false;
+        isCropBoxInitialized = true;
+        updateHandleVisibility();
+        savePDFToolState(); // 保存状态
+    }
+
+    function toggleCropBox() {
+        if (!pdfDoc) return alert("请先加载 PDF");
+        
+        const btn = document.getElementById('init-crop');
+        const isCurrentlyVisible = cropBox.style.display === 'block';
+        
+        if (isCurrentlyVisible) {
+            cropBox.style.display = 'none';
+            btn.style.backgroundColor = '#007bff';
+        } else {
+            if (!isCropBoxInitialized) {
+                initCropBox();
+            }
+            cropBox.style.display = 'block';
+            btn.style.backgroundColor = '#28a745';
+        }
+        savePDFToolState(); // 保存状态
+    }
+
+    document.getElementById('init-crop').addEventListener('click', toggleCropBox);
+
+    document.getElementById('lock-width-page').addEventListener('click', function() {
+        if (!pdfDoc) return;
+        cropBox.style.left = '0px';
+        cropBox.style.width = canvas.width + 'px';
+        isXLocked = true;
+        updateHandleVisibility();
+        updateLockButtonText();
+        savePDFToolState(); // 保存状态
+    });
+
+    document.getElementById('lock-x-toggle').addEventListener('click', function() {
+        isXLocked = !isXLocked;
+        updateHandleVisibility();
+        updateLockButtonText();
+        savePDFToolState(); // 保存状态
+    });
+
+    function updateLockButtonText() {
+        const btn = document.getElementById('lock-x-toggle');
+        btn.textContent = isXLocked ? "已锁定X轴(解锁)" : "锁定X轴(宽)";
+        btn.style.backgroundColor = isXLocked ? "#28a745" : "#007bff";
+    }
+
+    function updateHandleVisibility() {
+        const handles = cropBox.querySelectorAll('.resize-handle');
+        handles.forEach(h => {
+            const dir = h.dataset.dir;
+            if (isXLocked) {
+                if (['e', 'w', 'ne', 'nw', 'se', 'sw'].includes(dir)) {
+                    h.style.display = 'none';
+                } else {
+                    h.style.display = 'block';
+                }
+            } else {
+                h.style.display = 'block';
+            }
+        });
+        cropBox.style.cursor = isXLocked ? 'ns-resize' : 'move';
+    }
+
+    // 鼠标事件处理
+    const pageWrapper = document.getElementById('page-wrapper');
+
+    pageWrapper.addEventListener('mousedown', function(e) {
+        if (e.target.classList.contains('resize-handle')) {
+            isResizing = true;
+            resizeDir = e.target.dataset.dir;
+            startX = e.clientX;
+            startY = e.clientY;
+            startWidth = parseInt(document.defaultView.getComputedStyle(cropBox).width, 10);
+            startHeight = parseInt(document.defaultView.getComputedStyle(cropBox).height, 10);
+            startLeft = cropBox.offsetLeft;
+            startTop = cropBox.offsetTop;
+            e.stopPropagation();
+            e.preventDefault();
+        } else if (e.target === cropBox) {
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            startLeft = cropBox.offsetLeft;
+            startTop = cropBox.offsetTop;
+            e.stopPropagation();
+            e.preventDefault();
+        }
+    });
+
+    window.addEventListener('mousemove', function(e) {
+        if (isDragging) {
+            let dx = e.clientX - startX;
+            let dy = e.clientY - startY;
+            
+            let newTop = startTop + dy;
+            if (newTop < 0) newTop = 0;
+            if (newTop + cropBox.offsetHeight > canvas.height) newTop = canvas.height - cropBox.offsetHeight;
+            cropBox.style.top = newTop + 'px';
+
+            if (!isXLocked) {
+                let newLeft = startLeft + dx;
+                if (newLeft < 0) newLeft = 0;
+                if (newLeft + cropBox.offsetWidth > canvas.width) newLeft = canvas.width - cropBox.offsetWidth;
+                cropBox.style.left = newLeft + 'px';
+            }
+        } else if (isResizing) {
+            let dx = e.clientX - startX;
+            let dy = e.clientY - startY;
+
+            if (resizeDir.includes('s')) {
+                let newH = startHeight + dy;
+                if (newH > 10) cropBox.style.height = newH + 'px';
+            }
+            if (resizeDir.includes('n')) {
+                let newH = startHeight - dy;
+                let newTop = startTop + dy;
+                if (newH > 10 && newTop >= 0) {
+                    cropBox.style.height = newH + 'px';
+                    cropBox.style.top = newTop + 'px';
+                }
+            }
+
+            if (!isXLocked) {
+                if (resizeDir.includes('e')) {
+                    let newW = startWidth + dx;
+                    if (newW > 10) cropBox.style.width = newW + 'px';
+                }
+                if (resizeDir.includes('w')) {
+                    let newW = startWidth - dx;
+                    let newLeft = startLeft + dx;
+                    if (newW > 10 && newLeft >= 0) {
+                        cropBox.style.width = newW + 'px';
+                        cropBox.style.left = newLeft + 'px';
+                    }
+                }
+            }
+        }
+    });
+
+    window.addEventListener('mouseup', function() {
+        if (isDragging || isResizing) {
+            isDragging = false;
+            isResizing = false;
+            savePDFToolState(); // 拖拽/调整大小结束后保存状态
+        }
+    });
+
+    pageWrapper.addEventListener('contextmenu', function(e) {
+        e.preventDefault();
+        if (!pdfDoc) return;
+        if (!isCropBoxInitialized) initCropBox();
+        cropBox.style.left = '0px';
+        cropBox.style.top = '0px';
+        cropBox.style.width = canvas.width + 'px';
+        cropBox.style.height = canvas.height + 'px';
+        cropBox.style.display = 'block';
+        isCropBoxInitialized = true;
+        updateHandleVisibility();
+        const cropBtn = document.getElementById('init-crop');
+        if (cropBtn) cropBtn.style.backgroundColor = '#28a745';
+        if (typeof savePDFToolState === 'function') savePDFToolState();
+        
+        // 显示重置提示
+        const msg = document.createElement('div');
+        msg.textContent = '已重置截取框';
+        msg.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); background:rgba(0,0,0,0.7); color:white; padding:10px 20px; border-radius:5px; z-index:9999; pointer-events:none;';
+        document.body.appendChild(msg);
+        setTimeout(() => msg.remove(), 1000);
+    });
+
+    // ================= PDF截取与合并 =================
+
+    async function captureSelectedArea() {
+        if (!pdfDoc || cropBox.style.display === 'none' || !pdfBytes) return;
+
+        const rect = {
+            x: cropBox.offsetLeft,
+            y: cropBox.offsetTop,
+            w: cropBox.offsetWidth,
+            h: cropBox.offsetHeight
+        };
+
+        // 转换为PDF坐标系（PDF坐标原点在左下角，需要转换）
+        const page = await pdfDoc.getPage(pageNum);
+        const viewport = page.getViewport({scale: scale});
+        
+        // Canvas坐标转换为PDF坐标（点）
+        const pdfRect = {
+            x: rect.x / viewport.scale,
+            y: (viewport.height - rect.y - rect.h) / viewport.scale, // Y轴翻转
+            width: rect.w / viewport.scale,
+            height: rect.h / viewport.scale
+        };
+
+        console.log('截取区域 - Canvas坐标:', rect);
+        console.log('截取区域 - PDF坐标:', pdfRect);
+
+        // 创建预览Canvas
+        const previewCanvas = document.createElement('canvas');
+        previewCanvas.width = rect.w;
+        previewCanvas.height = rect.h;
+        const previewCtx = previewCanvas.getContext('2d');
+        previewCtx.drawImage(canvas, rect.x, rect.y, rect.w, rect.h, 0, 0, rect.w, rect.h);
+
+        // 保存截取信息
+        capturedRegions.push({
+            pageNum: pageNum,
+            rect: pdfRect,
+            previewCanvas: previewCanvas,
+            displayRect: rect
+        });
+        
+        updateCapturedList();
+        savePDFToolState(); // 保存状态
+        
+        // 视觉反馈
+        const originalBorder = cropBox.style.borderColor;
+        cropBox.style.borderColor = '#28a745';
+        setTimeout(() => { cropBox.style.borderColor = originalBorder; }, 200);
+    }
+
+    document.getElementById('capture-btn').addEventListener('click', captureSelectedArea);
+
+    function updateCapturedList() {
+        const list = document.getElementById('captured-list');
+        const countSpan = document.getElementById('count-span');
+        list.innerHTML = '';
+        countSpan.innerText = capturedRegions.length;
+
+        capturedRegions.forEach((item, index) => {
+            const div = document.createElement('div');
+            div.className = 'captured-item';
+            
+            const info = document.createElement('div');
+            info.className = 'info';
+            info.textContent = `片段 #${index + 1} - 页面 ${item.pageNum}`;
+            
+            const coords = document.createElement('div');
+            coords.className = 'coords';
+            coords.textContent = `PDF坐标: [${Math.round(item.rect.x)}, ${Math.round(item.rect.y)}, ${Math.round(item.rect.width)}×${Math.round(item.rect.height)}]`;
+            
+            const btn = document.createElement('button');
+            btn.className = 'remove-btn';
+            btn.innerHTML = '×';
+            btn.onclick = () => {
+                capturedRegions.splice(index, 1);
+                updateCapturedList();
+                savePDFToolState(); // 保存状态
+            };
+
+            div.appendChild(info);
+            div.appendChild(coords);
+            div.appendChild(item.previewCanvas);
+            div.appendChild(btn);
+            list.appendChild(div);
+        });
+        
+        requestAnimationFrame(() => {
+            list.scrollTop = list.scrollHeight;
+        });
+    }
+
+    document.getElementById('clear-btn').addEventListener('click', () => {
+        capturedRegions = [];
+        updateCapturedList();
+        savePDFToolState(); // 保存状态
+    });
+
+    // 合并PDF
+    document.getElementById('preview-btn').addEventListener('click', async function() {
+        if (capturedRegions.length === 0) return alert("还没有截取任何区域");
+        if (!pdfBytes) return alert("PDF数据不可用");
+
+        try {
+            console.log('开始合并PDF，共', capturedRegions.length, '个区域');
+            
+            // 使用 pdf-lib 创建新PDF
+            const { PDFDocument } = PDFLib;
+            const sourcePdf = await PDFDocument.load(pdfBytes);
+            const newPdf = await PDFDocument.create();
+
+            // 为每个截取区域创建一个新页面
+            for (let i = 0; i < capturedRegions.length; i++) {
+                const region = capturedRegions[i];
+                console.log(`处理区域 ${i + 1}/${capturedRegions.length}:`, region);
+
+                // 获取源页面
+                const sourcePage = sourcePdf.getPage(region.pageNum - 1);
+                const { width: pageWidth, height: pageHeight } = sourcePage.getSize();
+                
+                console.log('源页面尺寸:', pageWidth, 'x', pageHeight);
+                console.log('截取区域:', region.rect);
+                
+                // 创建新页面，尺寸为截取区域的尺寸
+                const newPage = newPdf.addPage([region.rect.width, region.rect.height]);
+                
+                // 嵌入源页面
+                const embeddedPage = await newPdf.embedPage(sourcePage);
+                
+                // 在新页面上绘制嵌入的页面，通过偏移来实现裁剪效果
+                // PDF坐标系：原点在左下角
+                newPage.drawPage(embeddedPage, {
+                    x: -region.rect.x,
+                    y: -region.rect.y,
+                    width: pageWidth,
+                    height: pageHeight
+                });
+                
+                console.log(`区域 ${i + 1} 处理完成`);
+            }
+
+            // 保存PDF
+            mergedPdfBytes = await newPdf.save();
+            console.log('PDF合并完成，大小:', mergedPdfBytes.length, 'bytes');
+
+            // 直接下载，跳过预览
+            downloadPDF();
+            
+        } catch (error) {
+            console.error('合并PDF失败:', error);
+            console.error('错误堆栈:', error.stack);
+            alert('合并PDF失败: ' + error.message);
+        }
+    });
+
+    async function showPreview(pdfData) {
+        const previewContainer = document.getElementById('preview-pages-container');
+        previewContainer.innerHTML = '<p>正在加载预览...</p>';
+        document.getElementById('preview-modal').style.display = 'flex';
+
+        try {
+            // 使用PDF.js渲染预览
+            const loadingTask = pdfjsLib.getDocument({data: pdfData});
+            const pdf = await loadingTask.promise;
+            
+            previewContainer.innerHTML = '';
+            
+            for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                const page = await pdf.getPage(pageNum);
+                const viewport = page.getViewport({scale: 1.5});
+                
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                
+                const context = canvas.getContext('2d');
+                await page.render({
+                    canvasContext: context,
+                    viewport: viewport
+                }).promise;
+                
+                const pageTitle = document.createElement('div');
+                pageTitle.textContent = `第 ${pageNum} 页`;
+                pageTitle.style.cssText = 'margin: 10px 0; font-weight: bold; color: #333;';
+                
+                previewContainer.appendChild(pageTitle);
+                previewContainer.appendChild(canvas);
+            }
+        } catch (error) {
+            console.error('预览PDF失败:', error);
+            previewContainer.innerHTML = '<p style="color: red;">预览失败: ' + error.message + '</p>';
+        }
+    }
+
+    function closePreview() {
+        document.getElementById('preview-modal').style.display = 'none';
+    }
+
+    function downloadPDF() {
+        if (!mergedPdfBytes) {
+            alert('没有可下载的PDF');
+            return;
+        }
+
+        const blob = new Blob([mergedPdfBytes], { type: 'application/pdf' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        let filename = document.getElementById('filename-input').value || '_diagnostic_steps';
+        if (!filename.toLowerCase().endsWith('.pdf')) filename += '.pdf';
+        
+        link.download = filename;
+        link.href = url;
+        link.click();
+        URL.revokeObjectURL(url);
+    }
+
+    // ================= 状态保存和恢复 =================
+    
+    const DB_NAME = 'pdfToolDB';
+    const DB_VERSION = 1;
+    const STORE_NAME = 'pdfFiles';
+    
+    function openDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => resolve(request.result);
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains(STORE_NAME)) {
+                    db.createObjectStore(STORE_NAME);
+                }
+            };
+        });
+    }
+    
+    async function savePDFToDB(pdfData) {
+        try {
+            const db = await openDB();
+            const transaction = db.transaction([STORE_NAME], 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            return new Promise((resolve, reject) => {
+                const request = store.put(pdfData, 'currentPDF');
+                request.onsuccess = () => {
+                    console.log('PDF文件已保存到IndexedDB');
+                    resolve();
+                };
+                request.onerror = () => reject(request.error);
+            });
+        } catch (e) {
+            console.error('保存PDF到IndexedDB失败:', e);
+        }
+    }
+    
+    async function loadPDFFromDB() {
+        try {
+            const db = await openDB();
+            const transaction = db.transaction([STORE_NAME], 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.get('currentPDF');
+            return new Promise((resolve, reject) => {
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        } catch (e) {
+            console.error('从IndexedDB加载PDF失败:', e);
+            return null;
+        }
+    }
+    
+    function savePDFToolState() {
+        if (!pdfDoc) return;
+        
+        const state = {
+            pageNum: pageNum,
+            scale: scale,
+            capturedRegions: capturedRegions.map(r => ({
+                pageNum: r.pageNum,
+                rect: r.rect,
+                displayRect: r.displayRect,
+                // previewDataUrl: r.previewCanvas.toDataURL() // 不再保存 Base64，减少存储开销
+            })),
+            isXLocked: isXLocked,
+            isCropBoxInitialized: isCropBoxInitialized,
+            cropBoxVisible: cropBox.style.display === 'block',
+            cropBoxPosition: cropBox.style.display === 'block' ? {
+                left: cropBox.style.left,
+                top: cropBox.style.top,
+                width: cropBox.style.width,
+                height: cropBox.style.height
+            } : null
+        };
+        
+        sessionStorage.setItem('pdfToolState', JSON.stringify(state));
+    }
+    
+    async function restorePDFToolState() {
+        if (!pdfDoc) return false;
+        
+        const stateStr = sessionStorage.getItem('pdfToolState');
+        if (!stateStr) return false;
+        
+        try {
+            const state = JSON.parse(stateStr);
+            
+            // 先恢复缩放比例，确保渲染时比例正确
+            if (state.scale) {
+                scale = state.scale;
+                document.getElementById('zoom-level').innerText = Math.round(scale * 100) + '%';
+            }
+
+            if (state.pageNum) {
+                pageNum = state.pageNum;
+                document.getElementById('page-num').textContent = `${pageNum} / ${pdfDoc.numPages}`;
+                renderPage(pageNum);
+            }
+            
+            if (state.capturedRegions && state.capturedRegions.length > 0) {
+                capturedRegions = [];
+                // 异步恢复每个区域的预览图
+                for (const r of state.capturedRegions) {
+                     const page = await pdfDoc.getPage(r.pageNum);
+                     const viewport = page.getViewport({scale: state.scale || 1.5}); // 使用保存的或默认scale
+                     
+                     // 创建临时Canvas渲染页面
+                     const tempCanvas = document.createElement('canvas');
+                     tempCanvas.width = viewport.width;
+                     tempCanvas.height = viewport.height;
+                     const tempCtx = tempCanvas.getContext('2d');
+                     
+                     await page.render({
+                         canvasContext: tempCtx,
+                         viewport: viewport
+                     }).promise;
+
+                     // 截取预览图
+                     const previewCanvas = document.createElement('canvas');
+                     // 计算在当前scale下的截取尺寸
+                     // r.rect 是PDF坐标，需要转换回 Canvas 坐标
+                     // 注意：这里需要根据当时的 scale 来还原，或者统一使用一种逻辑
+                     // 简单起见，我们重新计算 Canvas 坐标
+                     const rectX = r.rect.x * viewport.scale;
+                     const rectY = viewport.height - (r.rect.y * viewport.scale) - (r.rect.height * viewport.scale);
+                     const rectW = r.rect.width * viewport.scale;
+                     const rectH = r.rect.height * viewport.scale;
+
+                     previewCanvas.width = rectW;
+                     previewCanvas.height = rectH;
+                     const previewCtx = previewCanvas.getContext('2d');
+                     previewCtx.drawImage(tempCanvas, rectX, rectY, rectW, rectH, 0, 0, rectW, rectH);
+                     
+                     capturedRegions.push({
+                        pageNum: r.pageNum,
+                        rect: r.rect,
+                        displayRect: r.displayRect,
+                        previewCanvas: previewCanvas
+                    });
+                }
+                updateCapturedList();
+            }
+            
+            if (state.isCropBoxInitialized) {
+                isCropBoxInitialized = state.isCropBoxInitialized;
+            }
+            if (state.isXLocked !== undefined) {
+                isXLocked = state.isXLocked;
+                updateLockButtonText();
+            }
+            
+            if (state.cropBoxPosition) {
+                cropBox.style.left = state.cropBoxPosition.left;
+                cropBox.style.top = state.cropBoxPosition.top;
+                cropBox.style.width = state.cropBoxPosition.width;
+                cropBox.style.height = state.cropBoxPosition.height;
+                cropBox.style.display = state.cropBoxVisible ? 'block' : 'none';
+                updateHandleVisibility();
+                
+                const cropBtn = document.getElementById('init-crop');
+                if (cropBtn) {
+                    cropBtn.style.backgroundColor = state.cropBoxVisible ? '#28a745' : '#007bff';
+                }
+            }
+            
+            return true;
+        } catch (e) {
+            console.error('恢复PDF工具状态失败:', e);
+            return false;
+        }
+    }
+    
+    // 文件上传
+    const fileInput = document.getElementById('file-input');
+    fileInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (file.type !== 'application/pdf') {
+            alert('请选择 PDF 文件');
+            return;
+        }
+        
+        if (isAutoPaging) {
+            document.getElementById('auto-page-toggle').click();
+        }
+        
+        const fileReader = new FileReader();
+        fileReader.onload = async function() {
+            const typedarray = new Uint8Array(this.result);
+            pdfBytes = typedarray; // 保存原始PDF数据
+            
+            await savePDFToDB(typedarray);
+            
+            pdfjsLib.getDocument(typedarray).promise.then(function(pdfDoc_) {
+                pdfDoc = pdfDoc_;
+                pageNum = 1;
+                document.getElementById('page-num').textContent = `${pageNum} / ${pdfDoc.numPages}`;
+                renderPage(pageNum);
+                
+                const cropBtn = document.getElementById('init-crop');
+                cropBox.style.display = 'none';
+                isCropBoxInitialized = false;
+                cropBtn.style.backgroundColor = '#007bff';
+                
+                setTimeout(() => {
+                    restorePDFToolState();
+                }, 500);
+            });
+        };
+        fileReader.readAsArrayBuffer(file);
+    });
+    
+    // setInterval(savePDFToolState, 3000); // 移除定时保存，改为事件驱动
+    
+    // const originalCaptureSelectedArea = captureSelectedArea;
+    // captureSelectedArea = function() {
+    //    originalCaptureSelectedArea();
+    //    savePDFToolState();
+    // };
+
+    // 跳转到BBox工具页面
+    document.getElementById('bbox-tool-btn').addEventListener('click', function() {
+        savePDFToolState();
+        window.location.href = '../pdf_stitcher/bbox_tool.html';
+    });
+
+    // 页面加载时自动恢复
+    window.addEventListener('DOMContentLoaded', async function() {
+        const cachedPdfData = await loadPDFFromDB();
+        if (cachedPdfData) {
+            try {
+                pdfBytes = cachedPdfData;
+                pdfjsLib.getDocument(cachedPdfData).promise.then(function(pdfDoc_) {
+                    pdfDoc = pdfDoc_;
+                    document.getElementById('page-num').textContent = `${pageNum} / ${pdfDoc.numPages}`;
+                    renderPage(pageNum);
+                    
+                    setTimeout(() => {
+                        restorePDFToolState();
+                    }, 500);
+                });
+            } catch (e) {
+                console.error('从缓存恢复PDF失败:', e);
+            }
+        }
+    });
+
+</script>
+</body>
+</html>
+
